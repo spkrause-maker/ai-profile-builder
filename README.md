@@ -1,34 +1,42 @@
 # AI Profile Builder
 
-A conversational onboarding prototype that turns a local handyman's answers to eight plain-language questions into a ready-to-share profile page and a review-request text message, using Claude.
+**A conversational onboarding prototype that turns a local handyman's answers to eight plain-language questions into a ready-to-share profile and a review-request text, using Claude.**
 
-It was built as the supply-side piece of a product strategy for launching a home-services marketplace. The full strategy is in [`docs/strategy-deck.md`](docs/strategy-deck.md).
+It's the supply-side piece of a product strategy for launching a home-services marketplace on top of a hyperlocal news platform.
+
+<a id="try-it"></a>
+**▶ [Try the live prototype](https://claude.ai/artifact/RSAgJpLEWzWwSz1Qe97o3x)** (free Claude sign-in required) &nbsp;·&nbsp; **📄 [Strategy deck (PDF)](docs/local-ai-commerce-strategy-deck.pdf)** &nbsp;·&nbsp; [Deck as text](docs/strategy-deck.md)
+
+| 1. Landing | 2. Conversational intake | 3. Finished profile | 4. Claim & collect reviews |
+|---|---|---|---|
+| ![Landing screen](docs/images/1-landing.png) | ![Conversational intake](docs/images/2-intake.png) | ![Finished profile](docs/images/3-profile.png) | ![Claimed profile and review request](docs/images/4-claim.png) |
 
 ## The problem
 
-Two-sided home-services marketplaces live or die on supply density, and the biggest drop-off on the supply side is the profile. Most handymen don't have a website, don't enjoy writing about themselves, and abandon long sign-up forms. A thin profile also hurts conversion on the demand side.
+Two-sided home-services marketplaces live or die on supply density, and the biggest drop-off on the supply side is the profile. Most handymen don't have a website, don't enjoy writing about themselves, and abandon long sign-up forms. Incumbents either make them fill out forms (Thumbtack, Yelp, Google Local Services Ads) or sell them a paid, custom-built profile (Angi/HomeAdvisor). And a thin profile hurts conversion on the demand side.
 
-This prototype replaces the form with a short chat. It asks the questions a neighbor would ask, then writes the profile for them.
+This prototype replaces the form with a short chat. It asks the questions a neighbor would ask, then writes the profile for them: free, conversational, and done in minutes.
 
 ## How it works
 
-1. **Landing:** a low-commitment pitch: a free page to send new customers, in five minutes.
+1. **Landing:** a "virtual business card" pitch with no sign-up, no cost, and no obligation.
 2. **Conversational intake:** eight questions covering identity, services, background, service area, availability, a job they're proud of, an optional specialty, and how they'd want a neighbor to describe them.
-   - Tap-to-add **suggestion chips** for services lower the effort of the hardest question.
-   - An **LLM validation step** checks whether the services answer is actually a home-services trade and gently redirects once if not.
-   - The specialty question is **skippable**, and the generation prompt is told not to invent one when it's skipped.
-3. **Profile generation:** Claude returns structured JSON (name, contact line, first-person bio, service tags, review-request text), parsed defensively.
+   - Tap-to-add **suggestion chips** lower the effort of the hardest question (services).
+   - An **LLM validation step** checks that the services answer is actually a home-services trade and gently redirects once if not.
+   - The specialty question is **skippable**, and generation is told never to invent one.
+3. **Profile generation:** Claude returns structured JSON (name, contact line, first-person bio, service tags, cleaned-up service area and availability, and a review-request text), parsed defensively.
 4. **Output:** two framed previews:
-   - **Before you're hired:** the customer-facing profile page.
-   - **After you finish a job:** a copyable text message asking the customer for a review.
+   - **Before you're hired:** the customer-facing profile.
+   - **After you finish a job:** a copyable text asking the customer for a review.
 5. **Claim:** the conversion moment. Claiming is what would turn the preview into a live, shareable page. (Claim, Edit, and Share are stubbed in this prototype.)
 
 ## Product decisions worth noting
 
-- **Chat over form:** each question is answerable in a sentence on a phone; the model does the writing.
-- **Pride-based prompts:** "a job you're proud of" produces specific, trustworthy bio details that generic forms don't.
+- **Chat over form:** every question is answerable in a sentence on a phone; the model does the writing.
+- **Pride-based prompts:** "a job you're proud of" pulls out the specific, trustworthy details that generic forms never get, which is what keeps the bio from sounding like AI filler.
 - **Grounded generation:** the prompt pulls only from the provider's own answers and refuses to fabricate a specialty.
-- **Reviews from day one:** the review-request template gives new providers a way to solve their own cold-start problem.
+- **Clean up, don't echo:** vague answers like "the general area" are rewritten into display-ready phrases instead of being shown verbatim.
+- **Reviews from day one:** the review-request template gives brand-new providers a way to solve their own cold-start problem.
 
 ## Running locally
 
@@ -42,22 +50,24 @@ npm run dev
 
 Open the URL Vite prints (usually http://localhost:5173).
 
-API calls go through the Vite dev-server proxy (`vite.config.js`), which attaches your key on the server side, so it's never exposed to the browser. This setup is for local demos only. A production deployment would need its own backend endpoint.
+Locally, API calls go through the Vite dev-server proxy (`vite.config.js`), which attaches your key on the server side so it's never exposed to the browser. The hosted version on claude.ai uses the page's built-in Claude access instead, so no key is needed there. `callClaude()` in `src/App.jsx` picks whichever is available.
 
 ## Project structure
 
 ```
 ├── docs/
-│   └── strategy-deck.md   # Launch strategy deck content (slides + speaker notes)
+│   ├── local-ai-commerce-strategy-deck.pdf   # The designed strategy deck
+│   ├── strategy-deck.md                      # Text version of the deck
+│   └── images/                               # Screenshots and charts
 ├── src/
-│   ├── App.jsx            # The full prototype: intake flow, Claude calls, profile UI
+│   ├── App.jsx      # The full prototype: intake flow, Claude calls, profile UI
 │   ├── main.jsx
 │   └── index.css
 ├── index.html
-├── vite.config.js         # Dev proxy to the Anthropic API
+├── vite.config.js   # Dev proxy to the Anthropic API
 └── .env.example
 ```
 
 ## Status
 
-Prototype. Built to demonstrate the onboarding flow and the generation quality, not production-hardened. No persistence, auth, or real messaging.
+Prototype. Built to demonstrate the onboarding flow and generation quality, not production-hardened: no persistence, auth, or real messaging.

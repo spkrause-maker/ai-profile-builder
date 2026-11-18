@@ -1,9 +1,28 @@
 import { useState, useRef, useEffect } from "react";
 
-const CLAIM_NOTES = {
-  claim:
-    "Claiming turns this into your real profile page — a link you can text to customers, post on Nextdoor, or add to your business card. (Not wired up in this prototype.)",
+// ---------------------------------------------------------------------------
+// Design tokens (shared with the strategy deck)
+// ---------------------------------------------------------------------------
+const T = {
+  primary: "#E8432A",
+  primaryDark: "#C7331D",
+  ink: "#1A1A1A",
+  n600: "#555555",
+  n400: "#8A8A8A",
+  n200: "#E5E5E5",
+  bg: "#FFFFFF",
+  bgSubtle: "#F7F5F3",
+  tint: "#FDF1EE",
+  tintBorder: "#F6D5CC",
+  success: "#2E8B57",
+  radius: 10,
+  font: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+};
+
+const NOTES = {
   edit: "Preview only — editing isn't wired up in this prototype.",
+  claimed:
+    "Claiming turns this into your real profile page — a link you can text to customers, post on Nextdoor, or add to your business card. (Not wired up in this prototype.)",
   share:
     "Once live, this generates a link to your profile you can send anywhere. (Not wired up in this prototype.)",
 };
@@ -51,15 +70,22 @@ const QUESTIONS = [
   },
   {
     id: "closer",
-    text: "Last one — if a neighbor asked a friend \"do you know a good handyman,\" what's the one sentence you'd want them to say about you?",
+    text: "Last one — if a neighbor asked a friend \"Do you know a good handyman?\", what's the one sentence you'd want them to say about you?",
   },
 ];
 
-// Calls go through the Vite dev-server proxy (see vite.config.js), which adds
-// the API key server-side so it never ships to the browser.
-const MODEL = import.meta.env.VITE_CLAUDE_MODEL || "claude-sonnet-4-6";
+// ---------------------------------------------------------------------------
+// Claude call: uses the claude.ai page capability when published as an
+// artifact, otherwise the local Vite dev proxy (see vite.config.js).
+// ---------------------------------------------------------------------------
+const MODEL = import.meta.env?.VITE_CLAUDE_MODEL || "claude-sonnet-4-6";
 
 async function callClaude(systemPrompt, userPrompt) {
+  const sample = window.claude?.use ? await window.claude.use("sample") : null;
+  if (sample) {
+    const res = await sample(`${systemPrompt}\n\n---\n\n${userPrompt}`);
+    return res?.text ?? "";
+  }
   const response = await fetch("/api/anthropic/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -74,8 +100,7 @@ async function callClaude(systemPrompt, userPrompt) {
   if (!response.ok) {
     throw new Error(data?.error?.message || `API error ${response.status}`);
   }
-  const textBlock = data.content?.find((b) => b.type === "text");
-  return textBlock?.text ?? "";
+  return data.content?.find((b) => b.type === "text")?.text ?? "";
 }
 
 function parseJsonLoose(text) {
@@ -84,14 +109,12 @@ function parseJsonLoose(text) {
     return JSON.parse(cleaned);
   } catch {
     const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch {
-        return null;
-      }
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
     }
-    return null;
   }
 }
 
@@ -106,7 +129,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
   const [showPreviewNote, setShowPreviewNote] = useState(false);
-  const [claimNote, setClaimNote] = useState(null);
+  const [note, setNote] = useState(null);
   const [claimed, setClaimed] = useState(false);
   const [chipTapped, setChipTapped] = useState(false);
   const [typedManually, setTypedManually] = useState(false);
@@ -116,9 +139,7 @@ export default function App() {
   const scrollRef = useRef(null);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, checking]);
 
   function startIntake() {
@@ -237,7 +258,7 @@ export default function App() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      // clipboard access can fail silently in some sandboxed contexts — no need to block the demo
+      // clipboard access can fail in sandboxed contexts — don't block the demo
     }
   }
 
@@ -248,10 +269,12 @@ export default function App() {
         `You write short, warm, plain-spoken provider profiles for a local home-services app. Not corporate, not salesy — sounds like a real Columbus handyman describing himself. If the specialty/edge answer is blank or says it was skipped, do NOT invent one — just lean more on the 'proud job' answer instead. Given the provider's own answers, produce ONLY JSON with this exact shape, no other text:
 {
   "providerName": "the person's name or business name, pulled from their identity answer as plainly stated — don't invent one if unclear, just use their best-guess wording",
-  "contactDisplay": "their phone number or email, formatted plainly and cleanly, pulled from their identity answer",
+  "contactDisplay": "their phone number and/or email, formatted plainly and cleanly, separated by ' · ' if both are given",
   "bio": "2-4 sentence bio in first person, warm and specific, using at least one concrete detail from their 'proud job' answer (and their 'edge' answer only if it's actually provided)",
-  "tags": ["3-6 short service tags extracted from their services answer"],
-  "reviewRequestMessage": "a short, friendly text message template the provider can send a customer after a job, asking for a review, with a placeholder for the customer's name"
+  "tags": ["3-6 short service tags in Title Case, extracted from their services answer"],
+  "area": "their service area tightened into a short, natural display phrase (e.g. 'Columbus metro area & Akron', 'Clintonville & Worthington') — never first person, never vague filler like 'the general area'; if they were vague, default to 'Columbus metro area'",
+  "availability": "their availability tightened into a short display phrase (e.g. 'Weekdays, with some flexibility', 'Evenings & weekends')",
+  "reviewRequestMessage": "a short, friendly text message the provider can send a customer after a job asking for a review, starting 'Hi [Name],' and signed with the provider's first name"
 }`,
         `Provider's answers:
 Name/business name and contact info: ${finalAnswers.identity}
@@ -267,8 +290,8 @@ Neighbor pitch: ${finalAnswers.closer}`
       if (!parsed) throw new Error("parse_failed");
       setProfile({
         ...parsed,
-        area: finalAnswers.area,
-        availability: finalAnswers.availability,
+        area: parsed.area || finalAnswers.area,
+        availability: parsed.availability || finalAnswers.availability,
       });
       setStage("profile");
     } catch {
@@ -286,11 +309,11 @@ Neighbor pitch: ${finalAnswers.closer}`
             Columbus-area pros.
           </div>
           <div style={styles.eyebrow}>Columbus Home Services</div>
-          <h1 style={styles.h1}>Get a page to send new customers — free, in 5 minutes</h1>
+          <h1 style={styles.h1}>Your virtual business card, ready in 5 minutes</h1>
           <p style={styles.subtext}>
-            Answer a few quick questions and get back a ready-to-share
-            profile — the link you send when someone asks "do you know a
-            good handyman?" No sign-up, no cost, no obligation.
+            Answer a few quick questions and get a ready-to-share profile —
+            the digital card you send when someone asks "do you know a good
+            handyman?" No sign-up, no cost, no obligation.
           </p>
           <button style={styles.primaryBtn} onClick={startIntake}>
             Get started
@@ -308,18 +331,13 @@ Neighbor pitch: ${finalAnswers.closer}`
             {messages.map((m, i) => (
               <div
                 key={i}
-                style={{
-                  ...styles.bubble,
-                  ...(m.role === "ai" ? styles.bubbleAi : styles.bubbleUser),
-                }}
+                style={{ ...styles.bubble, ...(m.role === "ai" ? styles.bubbleAi : styles.bubbleUser) }}
               >
                 {m.text}
               </div>
             ))}
             {checking && (
-              <div style={{ ...styles.bubble, ...styles.bubbleAi, ...styles.thinking }}>
-                thinking…
-              </div>
+              <div style={{ ...styles.bubble, ...styles.bubbleAi, ...styles.thinking }}>thinking…</div>
             )}
           </div>
           <div style={styles.inputArea}>
@@ -369,12 +387,7 @@ Neighbor pitch: ${finalAnswers.closer}`
                 </button>
               )}
               {reminderShown && (
-                <button
-                  style={styles.continueLink}
-                  type="button"
-                  onClick={confirmContinue}
-                  disabled={checking}
-                >
+                <button style={styles.continueLink} type="button" onClick={confirmContinue} disabled={checking}>
                   Continue →
                 </button>
               )}
@@ -392,9 +405,22 @@ Neighbor pitch: ${finalAnswers.closer}`
 
       {stage === "profile" && profile && (
         <div style={styles.profileStageWrap}>
+          <div style={styles.pageHeader}>
+            <h1 style={styles.pageTitle}>Your Profile Is Ready</h1>
+            <p style={styles.pageSub}>
+              Here's what we built from your answers — a profile customers
+              see, and a message you send after every job to collect reviews.
+            </p>
+          </div>
+
           <div style={styles.profileScroll}>
             <div style={styles.sectionBlock}>
-              <div style={styles.sectionLabel}>Before you're hired</div>
+              <div style={styles.sectionLabelRow}>
+                <div style={styles.sectionLabel}>Before you're hired</div>
+                <button style={styles.editLink} type="button" onClick={() => setNote("edit")}>
+                  Edit
+                </button>
+              </div>
               <p style={styles.sectionDesc}>
                 This is what a customer sees when they find you. Share it
                 anywhere you'd normally hand out a business card.
@@ -406,7 +432,6 @@ Neighbor pitch: ${finalAnswers.closer}`
                   <span style={styles.browserDot} />
                 </div>
                 <div style={styles.profileCard}>
-                  <div style={styles.previewEyebrow}>Your profile preview</div>
                   <h2 style={styles.profileName}>{profile.providerName}</h2>
                   <div style={styles.contactLine}>{profile.contactDisplay}</div>
                   <p style={styles.profileBio}>{profile.bio}</p>
@@ -443,9 +468,8 @@ Neighbor pitch: ${finalAnswers.closer}`
             <div style={styles.sectionBlock}>
               <div style={styles.sectionLabel}>After you finish a job</div>
               <p style={styles.sectionDesc}>
-                Text this to the customer once the work's done — it's how
-                you start collecting the reviews that show up on your
-                profile above.
+                Text this to the customer once the work's done — it's how you
+                start collecting the reviews that show up on your profile above.
               </p>
               <div style={styles.framedPreview}>
                 <div style={styles.textThreadBar}>Text message</div>
@@ -463,40 +487,34 @@ Neighbor pitch: ${finalAnswers.closer}`
           </div>
 
           <div style={styles.claimFooter}>
-            <p style={styles.claimText}>
-              You're one of the first Columbus pros in our local network. As
-              neighbors nearby start looking for help, profiles like yours
-              are what they'll see.
-            </p>
-            <div style={styles.claimActions}>
-              <button
-                style={styles.primaryBtn}
-                onClick={() => {
-                  setClaimed(true);
-                  setClaimNote("claim");
-                }}
-              >
-                {claimed ? "Claimed ✓" : "Claim it"}
-              </button>
-              <button style={styles.secondaryBtn} onClick={() => setClaimNote("edit")}>
-                Edit it
-              </button>
-              <button
-                style={claimed ? styles.secondaryBtn : styles.secondaryBtnDisabled}
-                onClick={() => claimed && setClaimNote("share")}
-                disabled={!claimed}
-                title={!claimed ? "Claim your profile first to get a shareable link" : ""}
-              >
-                Share it
-              </button>
-            </div>
-            {!claimed && (
-              <div style={styles.helperText}>
-                Claim your profile first — that's what creates the real,
-                shareable page.
-              </div>
+            {!claimed ? (
+              <>
+                <p style={styles.claimText}>Claim your profile so customers can book your services.</p>
+                <button
+                  style={styles.primaryBtn}
+                  onClick={() => {
+                    setClaimed(true);
+                    setNote("claimed");
+                  }}
+                >
+                  Claim and share profile
+                </button>
+              </>
+            ) : (
+              <>
+                <p style={styles.claimText}>
+                  You're live — share your profile anywhere new customers
+                  might find you.
+                </p>
+                <div style={styles.claimActions}>
+                  <span style={styles.claimedBadge}>Claimed ✓</span>
+                  <button style={styles.primaryBtn} onClick={() => setNote("share")}>
+                    Share it
+                  </button>
+                </div>
+              </>
             )}
-            {claimNote && <div style={styles.previewNote}>{CLAIM_NOTES[claimNote]}</div>}
+            {note && <div style={styles.previewNote}>{NOTES[note]}</div>}
           </div>
         </div>
       )}
@@ -504,33 +522,37 @@ Neighbor pitch: ${finalAnswers.closer}`
   );
 }
 
+const card = {
+  background: T.bg,
+  borderRadius: 16,
+  boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+};
+
 const styles = {
   page: {
     minHeight: "100vh",
-    background: "#f6f5f3",
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    background: T.bgSubtle,
+    fontFamily: T.font,
+    color: T.ink,
     display: "flex",
     justifyContent: "center",
     padding: "24px 16px",
     boxSizing: "border-box",
   },
   centerCard: {
+    ...card,
     width: "100%",
     maxWidth: 420,
     margin: "auto",
     textAlign: "center",
-    background: "#fff",
-    borderRadius: 16,
     padding: "40px 28px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
   },
   arrivalNote: {
     fontSize: 12.5,
     color: "#7a6a5c",
-    background: "#f6f0e9",
-    border: "1px solid #eaddc9",
-    borderRadius: 10,
+    background: "#F6F0E9",
+    border: "1px solid #EADDC9",
+    borderRadius: T.radius,
     padding: "8px 12px",
     marginBottom: 18,
     lineHeight: 1.4,
@@ -538,68 +560,42 @@ const styles = {
   eyebrow: {
     fontSize: 12,
     fontWeight: 600,
-    letterSpacing: 0.5,
-    color: "#9a4a2e",
+    letterSpacing: 0.6,
+    color: T.primaryDark,
     textTransform: "uppercase",
     marginBottom: 12,
   },
-  h1: {
-    fontSize: 24,
-    fontWeight: 700,
-    margin: "0 0 12px",
-    color: "#1a1a1a",
-  },
-  subtext: {
-    fontSize: 15,
-    color: "#555",
-    lineHeight: 1.5,
-    marginBottom: 24,
-  },
+  h1: { fontSize: 24, fontWeight: 700, lineHeight: 1.3, margin: "0 0 12px", color: T.ink },
+  subtext: { fontSize: 15, color: T.n600, lineHeight: 1.5, marginBottom: 24 },
   primaryBtn: {
-    background: "#c1440e",
+    background: T.primary,
     color: "#fff",
     border: "none",
-    borderRadius: 10,
-    padding: "12px 24px",
+    borderRadius: T.radius,
+    padding: "12px 22px",
     fontSize: 15,
     fontWeight: 600,
-    cursor: "pointer",
-  },
-  secondaryBtn: {
-    background: "#fff",
-    color: "#c1440e",
-    border: "1px solid #c1440e",
-    borderRadius: 10,
-    padding: "12px 20px",
-    fontSize: 14,
-    fontWeight: 600,
+    fontFamily: T.font,
     cursor: "pointer",
   },
   chatWrap: {
+    ...card,
     width: "100%",
     maxWidth: 420,
     margin: "auto",
     display: "flex",
     flexDirection: "column",
     height: "80vh",
-    background: "#fff",
-    borderRadius: 16,
     overflow: "hidden",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
   },
   chatHeader: {
     padding: "14px 18px",
     fontSize: 13,
-    color: "#888",
-    borderBottom: "1px solid #eee",
+    color: T.n400,
+    borderBottom: `1px solid ${T.n200}`,
     fontWeight: 600,
   },
-  errorBanner: {
-    background: "#fdecea",
-    color: "#a33",
-    fontSize: 13,
-    padding: "8px 18px",
-  },
+  errorBanner: { background: "#fdecea", color: "#a33", fontSize: 13, padding: "8px 18px" },
   chatScroll: {
     flex: 1,
     overflowY: "auto",
@@ -608,58 +604,28 @@ const styles = {
     flexDirection: "column",
     gap: 10,
   },
-  bubble: {
-    maxWidth: "80%",
-    padding: "10px 14px",
-    borderRadius: 14,
-    fontSize: 14.5,
-    lineHeight: 1.45,
-  },
-  bubbleAi: {
-    background: "#f1efeb",
-    color: "#222",
-    alignSelf: "flex-start",
-    borderBottomLeftRadius: 4,
-  },
-  bubbleUser: {
-    background: "#c1440e",
-    color: "#fff",
-    alignSelf: "flex-end",
-    borderBottomRightRadius: 4,
-  },
-  thinking: {
-    fontStyle: "italic",
-    color: "#999",
-  },
-  inputArea: {
-    padding: 14,
-    borderTop: "1px solid #eee",
-  },
-  chipRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 10,
-  },
+  bubble: { maxWidth: "80%", padding: "10px 14px", borderRadius: 14, fontSize: 14.5, lineHeight: 1.45 },
+  bubbleAi: { background: "#F1EFEB", color: "#222", alignSelf: "flex-start", borderBottomLeftRadius: 4 },
+  bubbleUser: { background: T.primary, color: "#fff", alignSelf: "flex-end", borderBottomRightRadius: 4 },
+  thinking: { fontStyle: "italic", color: "#999" },
+  inputArea: { padding: 14, borderTop: `1px solid ${T.n200}` },
+  chipRow: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 },
   chip: {
     background: "#fff",
-    border: "1px solid #e6cdb8",
-    color: "#9a4a2e",
+    border: `1px solid ${T.tintBorder}`,
+    color: T.primaryDark,
     fontSize: 12.5,
     fontWeight: 600,
+    fontFamily: T.font,
     padding: "5px 11px",
     borderRadius: 999,
     cursor: "pointer",
   },
-  inputRow: {
-    display: "flex",
-    gap: 8,
-    alignItems: "flex-end",
-  },
+  inputRow: { display: "flex", gap: 8, alignItems: "flex-end" },
   textInput: {
     flex: 1,
     border: "1px solid #ddd",
-    borderRadius: 10,
+    borderRadius: T.radius,
     padding: "10px 12px",
     fontSize: 14.5,
     outline: "none",
@@ -670,21 +636,12 @@ const styles = {
     lineHeight: 1.4,
     boxSizing: "border-box",
   },
-  helperRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 4,
-  },
-  helperText: {
-    fontSize: 11.5,
-    color: "#aaa",
-    paddingLeft: 2,
-  },
+  helperRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 },
+  helperText: { fontSize: 11.5, color: "#aaa", paddingLeft: 2 },
   skipLink: {
     background: "none",
     border: "none",
-    color: "#9a4a2e",
+    color: T.primaryDark,
     fontSize: 11.5,
     fontWeight: 600,
     cursor: "pointer",
@@ -694,20 +651,21 @@ const styles = {
   continueLink: {
     background: "none",
     border: "none",
-    color: "#c1440e",
+    color: T.primary,
     fontSize: 12.5,
     fontWeight: 700,
     cursor: "pointer",
     padding: "2px 4px",
   },
   sendBtn: {
-    background: "#c1440e",
+    background: T.primary,
     color: "#fff",
     border: "none",
-    borderRadius: 10,
+    borderRadius: T.radius,
     padding: "10px 18px",
     fontSize: 14,
     fontWeight: 600,
+    fontFamily: T.font,
     cursor: "pointer",
     height: 44,
   },
@@ -716,7 +674,7 @@ const styles = {
     height: 32,
     margin: "0 auto 20px",
     border: "3px solid #eee",
-    borderTopColor: "#c1440e",
+    borderTopColor: T.primary,
     borderRadius: "50%",
     animation: "spin 0.8s linear infinite",
   },
@@ -726,8 +684,11 @@ const styles = {
     margin: "auto",
     display: "flex",
     flexDirection: "column",
-    height: "80vh",
+    height: "86vh",
   },
+  pageHeader: { paddingBottom: 12, marginBottom: 14, borderBottom: `1px solid ${T.n200}` },
+  pageTitle: { fontSize: 18, fontWeight: 700, margin: "0 0 4px", color: T.ink },
+  pageSub: { fontSize: 13, color: T.n600, lineHeight: 1.45, margin: 0 },
   profileScroll: {
     flex: 1,
     overflowY: "auto",
@@ -736,206 +697,109 @@ const styles = {
     gap: 22,
     paddingBottom: 16,
   },
-  sectionBlock: {
-    display: "flex",
-    flexDirection: "column",
-  },
-  sectionLabel: {
+  sectionBlock: { display: "flex", flexDirection: "column" },
+  sectionLabelRow: { display: "flex", justifyContent: "space-between", alignItems: "baseline" },
+  sectionLabel: { fontSize: 12.5, fontWeight: 700, color: T.primaryDark, marginBottom: 4 },
+  editLink: {
+    background: "none",
+    border: "none",
+    color: T.primaryDark,
     fontSize: 12.5,
-    fontWeight: 700,
-    color: "#5a3d2c",
-    marginBottom: 4,
+    fontWeight: 600,
+    fontFamily: T.font,
+    textDecoration: "underline",
+    cursor: "pointer",
+    padding: 0,
   },
-  sectionDesc: {
-    fontSize: 12.5,
-    color: "#888",
-    lineHeight: 1.45,
-    marginBottom: 10,
-  },
+  sectionDesc: { fontSize: 12.5, color: T.n400, lineHeight: 1.45, margin: "0 0 10px" },
   framedPreview: {
-    border: "1px solid #e2ddd4",
+    border: `1px solid ${T.n200}`,
     borderRadius: 14,
     overflow: "hidden",
-    background: "#efece6",
+    background: "#EFECE6",
   },
-  browserBar: {
-    display: "flex",
-    gap: 5,
-    padding: "8px 10px",
-    background: "#e2ddd4",
-  },
-  browserDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    background: "#c9c2b5",
-    display: "inline-block",
-  },
+  browserBar: { display: "flex", gap: 5, padding: "8px 10px", background: "#E2DDD4" },
+  browserDot: { width: 8, height: 8, borderRadius: "50%", background: "#C9C2B5", display: "inline-block" },
   textThreadBar: {
     fontSize: 11,
     fontWeight: 600,
-    color: "#888",
+    color: T.n400,
     padding: "8px 12px",
-    background: "#e2ddd4",
+    background: "#E2DDD4",
     textTransform: "uppercase",
     letterSpacing: 0.3,
   },
-  profileCard: {
-    background: "#fff",
-    padding: 24,
-    textAlign: "center",
-  },
-  previewEyebrow: {
-    fontSize: 11.5,
-    fontWeight: 700,
-    letterSpacing: 0.5,
-    color: "#aaa",
-    textTransform: "uppercase",
-    marginBottom: 10,
-  },
-  profileName: {
-    fontSize: 19,
-    fontWeight: 700,
-    margin: "0 0 4px",
-    color: "#1a1a1a",
-  },
-  contactLine: {
-    fontSize: 13,
-    color: "#888",
-    marginBottom: 14,
-  },
-  profileBio: {
-    fontSize: 14.5,
-    color: "#333",
-    lineHeight: 1.55,
-    textAlign: "left",
-    marginBottom: 14,
-  },
-  tagRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-    justifyContent: "center",
-    marginBottom: 18,
-  },
+  profileCard: { background: "#fff", padding: 24, textAlign: "center" },
+  profileName: { fontSize: 19, fontWeight: 700, margin: "0 0 4px", color: T.ink },
+  contactLine: { fontSize: 13, color: T.n400, marginBottom: 14 },
+  profileBio: { fontSize: 14.5, color: "#333", lineHeight: 1.55, textAlign: "left", marginBottom: 14 },
+  tagRow: { display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginBottom: 18 },
   tag: {
-    background: "#f1efeb",
-    color: "#7a3a22",
+    background: T.tint,
+    color: T.primaryDark,
     fontSize: 12.5,
     fontWeight: 600,
     padding: "5px 12px",
     borderRadius: 999,
   },
-  metaGrid: {
-    display: "flex",
-    gap: 12,
-    textAlign: "left",
-    marginBottom: 16,
-  },
-  metaItem: {
-    flex: 1,
-    background: "#f6f5f3",
-    borderRadius: 10,
-    padding: "10px 12px",
-  },
+  metaGrid: { display: "flex", gap: 12, textAlign: "left", marginBottom: 16 },
+  metaItem: { flex: 1, background: T.bgSubtle, borderRadius: T.radius, padding: "10px 12px" },
   metaLabel: {
     fontSize: 11,
     fontWeight: 700,
-    color: "#9a4a2e",
+    color: T.primaryDark,
     textTransform: "uppercase",
     letterSpacing: 0.3,
     marginBottom: 3,
   },
-  metaValue: {
-    fontSize: 13.5,
-    color: "#333",
-    lineHeight: 1.4,
-  },
-  starsPlaceholder: {
-    fontSize: 13,
-    color: "#aaa",
-    marginBottom: 16,
-  },
+  metaValue: { fontSize: 13.5, color: "#333", lineHeight: 1.4 },
+  starsPlaceholder: { fontSize: 13, color: "#aaa", marginBottom: 16 },
   contactBtn: {
     width: "100%",
-    background: "#c1440e",
+    background: T.primary,
     color: "#fff",
     border: "none",
-    borderRadius: 10,
-    padding: "12px",
+    borderRadius: T.radius,
+    padding: 12,
     fontSize: 14.5,
     fontWeight: 600,
+    fontFamily: T.font,
     cursor: "pointer",
   },
-  previewNote: {
-    marginTop: 10,
-    fontSize: 12.5,
-    color: "#888",
-    fontStyle: "italic",
-  },
-  reviewCard: {
-    background: "#fff",
-    padding: 20,
-  },
-  reviewLabelRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  reviewLabel: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#888",
-    textTransform: "uppercase",
-  },
+  previewNote: { marginTop: 10, fontSize: 12.5, color: T.n400, fontStyle: "italic", lineHeight: 1.45 },
+  reviewCard: { background: "#fff", padding: 20 },
+  reviewLabelRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  reviewLabel: { fontSize: 12, fontWeight: 600, color: T.n400, textTransform: "uppercase" },
   copyBtn: {
     background: "none",
-    border: "1px solid #ddd",
+    border: `1px solid ${T.n200}`,
     borderRadius: 8,
-    color: "#9a4a2e",
+    color: T.primaryDark,
     fontSize: 12,
     fontWeight: 600,
+    fontFamily: T.font,
     padding: "4px 10px",
     cursor: "pointer",
   },
   reviewBubble: {
     fontSize: 14,
-    color: "#1a1a1a",
+    color: T.ink,
     lineHeight: 1.5,
-    background: "#d9fdd3",
+    background: "#D9FDD3",
     borderRadius: "14px 14px 14px 2px",
     padding: "12px 14px",
     display: "inline-block",
     maxWidth: "100%",
   },
   claimFooter: {
-    background: "#fff5ef",
-    border: "1px solid #f0d9c8",
+    background: T.tint,
+    border: `1px solid ${T.tintBorder}`,
     borderRadius: 16,
     padding: 20,
     boxShadow: "0 -2px 8px rgba(0,0,0,0.05)",
     flexShrink: 0,
   },
-  claimText: {
-    fontSize: 14,
-    color: "#5a3d2c",
-    lineHeight: 1.5,
-    marginBottom: 14,
-  },
-  claimActions: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  secondaryBtnDisabled: {
-    background: "#f2f2f2",
-    color: "#bbb",
-    border: "1px solid #e5e5e5",
-    borderRadius: 10,
-    padding: "12px 20px",
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: "not-allowed",
-  },
+  claimText: { fontSize: 14, color: T.primaryDark, lineHeight: 1.5, margin: "0 0 14px" },
+  claimActions: { display: "flex", gap: 14, alignItems: "center" },
+  claimedBadge: { fontSize: 14, fontWeight: 600, color: T.success },
 };
