@@ -631,6 +631,8 @@ const styles = {
     outline: "none",
     fontFamily: "inherit",
     resize: "vertical",
+    background: "#fff",
+    color: T.ink,
     minHeight: 44,
     maxHeight: 160,
     lineHeight: 1.4,
